@@ -1,0 +1,106 @@
+#!/usr/bin/env python
+# -*- encoding: utf-8 -*-
+# ctrl + alt + l
+import cv2
+import mediapipe as mp
+import time
+import numpy as np
+from ctypes import cast, POINTER
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+devices = AudioUtilities.GetSpeakers()
+interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+volume = cast(interface, POINTER(IAudioEndpointVolume))
+volrange = volume.GetVolumeRange()
+minvol = volrange[0]
+maxvol = volrange[1]
+
+mp_drawing = mp.solutions.drawing_utils
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=20,
+    min_detection_confidence=0.8,
+    min_tracking_confidence=0.8)
+
+cap = cv2.VideoCapture(0)
+vol = 0
+volBar = 400
+volPer = 0
+rvol = 0
+# 设置元组/列表 对应音量0，10，...，100
+rvols = (-65.25, -33, -24, -18, -13.5, -10.4, -7.7, -5.4, -3.4, -1.6, 0)
+tdist = 0
+rvol1 = 0
+while True:
+    # 设置递增q，实现手势停0.2秒左右，才调节声音
+    q = 0
+    flag = 0
+    while True:
+        ret, frame = cap.read()
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # 因为摄像头是镜像的，所以将摄像头水平翻转
+        frame = cv2.flip(frame, 1)
+        results = hands.process(frame)
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        t1 = time.time()
+        time.sleep(0.02)
+        try:
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    # 关键点可视化
+                    dist = mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                    # 设置分段函数，便于调节
+                    if dist <= 100:
+                        tdist = int(np.interp(dist, [30, 100], [19, 79]))
+                    else:
+                        tdist = int(np.interp(dist, [100, 200], [80, 219]))
+                    # 获得音量百分比 整十数
+                    volPer = tdist // 20 * 10
+                    # 电脑音量对应值
+                    rvol = rvols[volPer // 10]
+                    volBar = 400 - volPer // 10 * 30
+                    # 手势不变则计数，否则重新计数
+                    if rvol != rvol1:
+                        rvol1 = rvol
+                        q = 0
+                    else:
+                        q += 1
+
+                    cv2.rectangle(img=frame, pt1=(50, 100), pt2=(85, 400), color=(255, 0, 0), thickness=3)
+                    cv2.rectangle(img=frame, pt1=(50, int(volBar)), pt2=(85, 400), color=(255, 255, 0), thickness=3,
+                                  lineType=cv2.FILLED)
+                    cv2.putText(frame, '{0}%'.format(int(volPer)), (40, 450), 2, 1, (0, 0, 255), 2)
+                    # 手势不变，调节电脑音量
+                    if q < 10:
+                        pass
+                    else:
+                        volume.SetMasterVolumeLevel(rvol, None)
+
+            t2 = time.time()
+            # 计算检测帧率
+            fps = 1 / np.maximum((t2 - t1), 0.0001)
+            # 在屏幕上显示帧率
+            frame = cv2.putText(img=frame, text="fps= %.2f" % fps, org=(0, 40), fontFace=3,
+                                fontScale=1, color=(0, 255, 0), thickness=2)
+
+            cv2.imshow('MediaPipe Hands', frame)
+
+            if cv2.waitKey(1) & 0xFF == 27:
+                flag = 1
+                break
+
+        except:
+            t2 = time.time()
+            # 计算检测帧率
+            fps = 1 / np.maximum((t2 - t1), 0.0001)
+            # 在屏幕上显示帧率
+            frame = cv2.putText(img=frame, text="fps= %.2f" % fps, org=(0, 40), fontFace=3,
+                                fontScale=1, color=(0, 255, 0), thickness=2)
+
+            cv2.imshow('MediaPipe Hands', frame)
+
+    if flag == 1:
+        break
+cap.release()
